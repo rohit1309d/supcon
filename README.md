@@ -1,21 +1,12 @@
-# SogCLR PyTorch Implementation
-
-In this repo, we show how to train a self-supervised model by using [Global Contrastive Loss](https://arxiv.org/abs/2202.12387) (GCL) on [ImageNet](https://image-net.org/). The original GCL was implementated in Tensorflow and run in TPUs [here](https://github.com/Optimization-AI/SogCLR/tree/Tensorflow). This repo **re-implements** GCL in PyTorch based on [moco's](https://github.com/facebookresearch/moco) codebase. We recommend users to run this codebase on GPU-enabled environments, such as [Google Cloud](https://cloud.google.com/), [AWS](https://aws.amazon.com/).
-
-## What's new
-- 2023.03.05 Fixed `RuntimeError` related to variable `u`
-- 2023.03.05 Fixed `AttributeError` related to `margin`
 
 ## Installation
 
 #### git clone
 ```bash
-git clone https://github.com/Optimization-AI/SogCLR.git
+git clone https://github.com/rohit1309d/supcon
 ```
 
 ### Training  
-Below is an example for self-supervised pre-training of a ResNet-50 model on ImageNet on a 4-GPU server. By default, we use sqrt learning rate scaling, i.e., $\text{LearningRate}=0.075\times\sqrt{\text{BatchSize}}$, [LARS](https://arxiv.org/abs/1708.03888) optimizer and a weight decay of 1e-6. For temperature parameter $\tau$, we use a fixed value $0.1$ from [SimCLR](https://arxiv.org/pdf/2002.05709.pdf). For GCL, gamma (γ in the paper) is an additional parameter for maintaining moving average estimator, the default value is $0.9$, however, it is recommended to tune this parameter in the range of $[0.1\sim 0.99]$ for better performance. 
-
 
 **ImageNet1K**
 
@@ -40,10 +31,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py \
 
 **ImageNet100**
 
-We also used a small version of ImageNet1K for experiments, i.e., ImageNet-100 is a subset with random selected 100 classes from original 1000 classes. To contrust the dataset, please follow these steps:
-* Download the train and validation datasets from [ImageNet1K](https://image-net.org/challenges/LSVRC/2012/) website
-* Run this [script](https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh) to create/move all validation images to each category (class) folder
-* Copy images from [train/val.txt](https://github.com/Optimization-AI/SogCLR/blob/main/dataset/ImageNet-S/train.txt) to generate ImageNet-100
 
 We use a batch size of 256 and pretrain ResNet-50 for 400 epochs.
 
