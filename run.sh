@@ -1,13 +1,13 @@
-CUDA_VISIBLE_DEVICES=0 python train.py \
-  --lr=.075 --epochs=800 --batch-size=32 \
+CUDA_VISIBLE_DEVICES=0,1 python train.py \
+  --lr=.075 --epochs=250 --batch-size=256 \
   --learning-rate-scaling=sqrt \
   --loss_type dcl \
   --gamma 0.9 \
-  --multiprocessing-distributed --world-size 1 --rank 0 --workers 2 \
+  --multiprocessing-distributed --world-size 1 --rank 0 --workers 32 \
   --crop-min=.08 \
   --wd=1e-6 \
   --dist-url 'tcp://localhost:10001' \
-  --data_name imagenet1000 \
-  --data ../data/imageNet/ \
-  --save_dir models/ \
-  --print-freq 1000
+  --data_name cifar10 \
+  --data ../data/cifar10/ \
+  --save_dir ./saved_models/ \
+  --print-freq 25

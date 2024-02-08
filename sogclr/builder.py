@@ -39,6 +39,7 @@ class SimCLR(nn.Module):
 		
 		# for DCL
 		self.u = torch.zeros(N).reshape(-1, 1) #.to(self.device) 
+		self.v = torch.zeros(N).reshape(-1, 1) #.to(self.device) 
 		self.LARGE_NUM = 1e9
 
 
@@ -65,31 +66,32 @@ class SimCLR(nn.Module):
 
 	def dynamic_contrastive_loss(self, hidden1, hidden2, labels_idx=None, index=None, gamma=0.9, distributed=True):
 		# Get (normalized) hidden1 and hidden2.
-		print(len(hidden1), hidden1.shape, hidden2.shape)
 		hidden1, hidden2 = F.normalize(hidden1, p=2, dim=1), F.normalize(hidden2, p=2, dim=1)
 		batch_size = hidden1.shape[0]
-		
+
 		# Gather hidden1/hidden2 across replicas and create local labels.
 		if distributed:  
 			hidden1_large = torch.cat(all_gather_layer.apply(hidden1), dim=0) # why concat_all_gather()
 			hidden2_large =  torch.cat(all_gather_layer.apply(hidden2), dim=0)
+			labels_large = torch.cat(all_gather_layer.apply(labels_idx), dim=0)
 			enlarged_batch_size = hidden1_large.shape[0]
 
-			if labels_idx is None:
+			if labels_idx is None:			   
 				labels_idx = (torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()).to(self.device) 
-			labels = F.one_hot(labels_idx, enlarged_batch_size*2).to(self.device) 
-			masks  = F.one_hot(labels_idx, enlarged_batch_size).to(self.device) 
-			
+				labels = F.one_hot(labels_idx, enlarged_batch_size*2).to(self.device) 
+				masks  = F.one_hot((torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()), enlarged_batch_size).to(self.device) 
+			else:
+				masks  = F.one_hot((torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()), enlarged_batch_size).to(self.device) 
+				labels = torch.cat([(labels_idx[:, None] == labels_large[None, :]),(labels_idx[:, None] == labels_large[None, :])], dim=1).float().to(self.device) 
 			batch_size = enlarged_batch_size
 		else:
 			hidden1_large = hidden1
 			hidden2_large = hidden2
-			if labels_raw is None:
+			masks  = F.one_hot(torch.arange(batch_size, dtype=torch.long), batch_size).to(self.device) 
+			if labels_idx is None:	
 				labels = F.one_hot(torch.arange(batch_size, dtype=torch.long), batch_size * 2).to(self.device) 
-				masks  = F.one_hot(torch.arange(batch_size, dtype=torch.long), batch_size).to(self.device) 
 			else:
-				labels = F.one_hot(labels_idx, enlarged_batch_size*2).to(self.device) 
-				masks  = F.one_hot(labels_idx, enlarged_batch_size).to(self.device) 
+				labels = torch.cat([(labels_idx.unsqueeze(0) == labels_idx.unsqueeze(1)),(labels_idx.unsqueeze(0) == labels_idx.unsqueeze(1))], dim=1).float().to(self.device) 
 
 		logits_aa = torch.matmul(hidden1, hidden1_large.T)
 		logits_aa = logits_aa - masks * self.LARGE_NUM
@@ -102,10 +104,11 @@ class SimCLR(nn.Module):
 		neg_mask = 1-labels
 		logits_ab_aa = torch.cat([logits_ab, logits_aa ], 1)
 		logits_ba_bb = torch.cat([logits_ba, logits_bb ], 1)
-	  
+
 		neg_logits1 = torch.exp(logits_ab_aa /self.T)*neg_mask   #(B, 2B)
 		neg_logits2 = torch.exp(logits_ba_bb /self.T)*neg_mask
-		print(neg_logits1.shape, neg_logits1)
+		pos_logits1 = torch.exp(logits_ab_aa /self.T)*labels   #(B, 2B)
+		pos_logits2 = torch.exp(logits_ba_bb /self.T)*labels
 
 		# u init    
 		if self.u[index.cpu()].sum() == 0:
@@ -113,37 +116,39 @@ class SimCLR(nn.Module):
 			
 		u1 = (1 - gamma) * self.u[index.cpu()].cuda() + gamma * torch.sum(neg_logits1, dim=1, keepdim=True)/(2*(batch_size-1))
 		u2 = (1 - gamma) * self.u[index.cpu()].cuda() + gamma * torch.sum(neg_logits2, dim=1, keepdim=True)/(2*(batch_size-1))
-		print(u1.shape, "u1")
+
 		# this sync on all devices (since "hidden" are gathering from all devices)
 		if distributed:
-		   u1_large = concat_all_gather(u1)
-		   u2_large = concat_all_gather(u2)
-		   index_large = concat_all_gather(index)
-		   self.u[index_large.cpu()] = (u1_large.detach().cpu() + u2_large.detach().cpu())/2 
+			u1_large = concat_all_gather(u1)
+			u2_large = concat_all_gather(u2)
+			index_large = concat_all_gather(index)
+			self.u[index_large.cpu()] = (u1_large.detach().cpu() + u2_large.detach().cpu())/2 
 		else:
-		   self.u[index.cpu()] = (u1.detach().cpu() + u2.detach().cpu())/2 
+			self.u[index.cpu()] = (u1.detach().cpu() + u2.detach().cpu())/2 
 
-		p_neg_weights1 = (neg_logits1/u1).detach()
-		p_neg_weights2 = (neg_logits2/u2).detach()
-		print(p_neg_weights1.shape, "p_neg_weights1")
+		p_pos_weights1 = (pos_logits1/u1).detach()
+		p_pos_weights2 = (pos_logits2/u2).detach()
 
-		def softmax_cross_entropy_with_logits(labels, logits, weights):
-			expsum_neg_logits = torch.sum(weights*logits, dim=1, keepdim=True)/(2*(batch_size-1))
-			normalized_logits = logits - expsum_neg_logits
-			return -torch.sum(labels * normalized_logits, dim=1)
+		v1 = (1 - gamma) * self.v[index.cpu()].cuda() + gamma * torch.sum(p_pos_weights1, dim=1, keepdim=True)/torch.sum(labels, dim=1, keepdim=True)
+		v2 = (1 - gamma) * self.v[index.cpu()].cuda() + gamma * torch.sum(p_pos_weights2, dim=1, keepdim=True)/torch.sum(labels, dim=1, keepdim=True)
 
-		loss_a = softmax_cross_entropy_with_logits(labels, logits_ab_aa, p_neg_weights1)
-		loss_b = softmax_cross_entropy_with_logits(labels, logits_ba_bb, p_neg_weights2)
-		print(loss_a, "loss")
+		# this sync on all devices (since "hidden" are gathering from all devices)
+		if distributed:
+			v1_large = concat_all_gather(v1)
+			v2_large = concat_all_gather(v2)
+			index_large = concat_all_gather(index)
+			self.v[index_large.cpu()] = (v1_large.detach().cpu() + v2_large.detach().cpu())/2 
+		else:
+			self.v[index.cpu()] = (v1.detach().cpu() + v2.detach().cpu())/2 
 
-		def supcon_loss(loss1, loss2, labels):
-			labels_large = torch.cat([labels, labels])
-			loss_large = torch.cat([loss1, loss2])
-			unique_labels, label_indices = np.unique(labels_large, return_inverse=True)
-			return np.bincount(label_indices, weights=loss_large) / np.bincount(label_indices)
-		
-		mean_losses = supcon_loss(loss_a, loss_b, labels)
-		loss = mean_losses.mean()
+		def df2(labels, logits, p_pos_weights, neg_logits, u):
+			exp_logits = p_pos_weights*logits
+			df1 = torch.sum(neg_logits*logits, dim=1, keepdim=True)
+			normalised_logits = (p_pos_weights*df1)/u - exp_logits
+			return -torch.sum(labels*normalised_logits, dim=1, keepdim=True)
+		loss_a = -torch.sum(df2(labels, logits_ab_aa, p_pos_weights1, neg_logits1, u1)/v1, dim=1)
+		loss_b = -torch.sum(df2(labels, logits_ba_bb, p_pos_weights2, neg_logits2, u2)/v2, dim=1)
+		loss = (loss_a + loss_b).mean()
 		return loss
 	
 	def forward(self, x1, x2, labels, index, gamma):
@@ -166,7 +171,6 @@ class SimCLR(nn.Module):
 class SimCLR_ResNet(SimCLR):
 	def _build_projector_and_predictor_mlps(self, dim, mlp_dim, num_proj_layers=2):
 		hidden_dim = self.base_encoder.fc.weight.shape[1]
-		print(hidden_dim, "hidden")
 		del self.base_encoder.fc  # remove original fc layer
 			
 		# projectors

@@ -28,7 +28,7 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as torchvision_models
-# from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 torchvision_model_names = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -173,7 +173,9 @@ def main_worker(gpu, ngpus_per_node, args):
         model = torchvision_models.__dict__[args.arch]()
         linear_keyword = 'fc'
         
-    if args.data_name == 'imagenet50': 
+    if args.data_name == 'cifar10': 
+         num_classes = 10
+    elif args.data_name == 'imagenet50': 
          num_classes = 50
     elif args.data_name == 'imagenet100': 
          num_classes = 100
@@ -276,7 +278,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # check this if checkpoint is located in the current directory
     fold_name = args.pretrained.split('/')[-2]
     logdir = 'linear_eval_%s'%(fold_name) 
-    # summary_writer = SummaryWriter(log_dir=os.path.join(save_root_path, logdir)) if args.rank == 0 else None
+    summary_writer = SummaryWriter(log_dir=os.path.join(save_root_path, logdir)) if args.rank == 0 else None
     print (logdir)
 
     
@@ -306,24 +308,39 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     # Data loading code
-    mean = {'imagenet100':  [0.485, 0.456, 0.406],
+    mean = {'cifar10':  [125.3, 123.0, 113.9],
+            'imagenet50':  [0.485, 0.456, 0.406],
+            'imagenet100':  [0.485, 0.456, 0.406],
             'imagenet1000': [0.485, 0.456, 0.406],
             }[args.data_name]
-    std = {'imagenet100':   [0.229, 0.224, 0.225],
-           'imagenet1000': [0.229, 0.224, 0.225],
+    std = {'cifar10':   [63.0, 62.1, 66.7],
+           'imagenet50':   [0.229, 0.224, 0.225],
+           'imagenet100':   [0.229, 0.224, 0.225],
+            'imagenet1000': [0.229, 0.224, 0.225],
             }[args.data_name]
 
 
-    image_size = {'imagenet100':224, 'imagenet1000':224}[args.data_name]
+    image_size = {'cifar10':32, 'imagenet50':224, 'imagenet100':224, 'imagenet1000':224}[args.data_name]
     normalize = transforms.Normalize(mean=mean, std=std)
 
-    if args.data_name == 'imagenet1000' or args.data_name == 'imagenet100' :
+    if args.data_name == 'imagenet1000' or args.data_name == 'imagenet100' or args.data_name == 'imagenet50':
         traindir = os.path.join(args.data, 'train')
         valdir = os.path.join(args.data, 'val')
         train_dataset = datasets.ImageFolder(
             traindir,
             transforms.Compose([
                 transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+    elif args.data_name == 'cifar10':
+        traindir = os.path.join(args.data, 'train')
+        valdir = os.path.join(args.data, 'test')
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(32),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 normalize,
@@ -343,7 +360,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     # validation 
-    if args.data_name == 'imagenet1000' or args.data_name == 'imagenet100' :
+    if args.data_name == 'imagenet1000' or args.data_name == 'imagenet100' or args.data_name == 'imagenet50':
            
             val_loader = torch.utils.data.DataLoader(
                 datasets.ImageFolder(valdir, transforms.Compose([
@@ -354,7 +371,17 @@ def main_worker(gpu, ngpus_per_node, args):
                 ])),
                 batch_size=256, shuffle=False,
                 num_workers=args.workers, pin_memory=True)
-
+    elif args.data_name == 'cifar10':
+           
+            val_loader = torch.utils.data.DataLoader(
+                datasets.ImageFolder(valdir, transforms.Compose([
+                    transforms.Resize(48),
+                    transforms.CenterCrop(32),
+                    transforms.ToTensor(),
+                    normalize,
+                ])),
+                batch_size=256, shuffle=False,
+                num_workers=args.workers, pin_memory=True)
     else:
         raise ValueError
 
