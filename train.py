@@ -350,6 +350,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
 
     best_loss = 1000000000000
+    best_model = {}
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -364,25 +365,36 @@ def main_worker(gpu, ngpus_per_node, args):
                 and args.rank == 0): # only the first GPU saves checkpoint
             
             if epoch % 10 == 0 or args.epochs - epoch < 3:
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'arch': args.arch,
-                    'state_dict': model.state_dict(),
-                    'optimizer' : optimizer.state_dict(),
-                    'scaler': scaler.state_dict(),
-                    'u': model.module.u, 
-                }, is_best=False, filename=os.path.join(save_root_path, logdir, 'checkpoint_%04d.pth.tar' % epoch) )
+                # save_checkpoint({
+                #     'epoch': epoch + 1,
+                #     'arch': args.arch,
+                #     'state_dict': model.state_dict(),
+                #     'optimizer' : optimizer.state_dict(),
+                #     'scaler': scaler.state_dict(),
+                #     'u': model.module.u, 
+                # }, is_best=False, filename=os.path.join(save_root_path, logdir, 'checkpoint_%04d.pth.tar' % epoch) )
             
                 if loss < best_loss:
-                    save_checkpoint({
+                    best_model = {
                         'epoch': epoch + 1,
                         'arch': args.arch,
                         'state_dict': model.state_dict(),
                         'optimizer' : optimizer.state_dict(),
                         'scaler': scaler.state_dict(),
                         'u': model.module.u, 
-                    }, is_best=False, filename=os.path.join(save_root_path, logdir, 'model_best.pth.tar') )
-                    print("Saved model_best.pth.tar on epoch", epoch+1)
+                    }
+                    best_loss = loss
+                    # save_checkpoint({
+                    #     'epoch': epoch + 1,
+                    #     'arch': args.arch,
+                    #     'state_dict': model.state_dict(),
+                    #     'optimizer' : optimizer.state_dict(),
+                    #     'scaler': scaler.state_dict(),
+                    #     'u': model.module.u, 
+                    # }, is_best=False, filename=os.path.join(save_root_path, logdir, 'model_best.pth.tar') )
+                    # print("Saved model_best.pth.tar on epoch", epoch+1)
+    if len(best_model.keys()) != 0:
+        save_checkpoint(best_model, is_best=False, filename=os.path.join(save_root_path, logdir, 'model_best.pth.tar') )
 
     if args.rank == 0:
         summary_writer.close()
