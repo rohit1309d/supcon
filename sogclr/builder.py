@@ -145,7 +145,8 @@ class SimCLR(nn.Module):
 			exp_logits = p_pos_weights*logits
 			df1 = torch.sum(neg_logits*logits, dim=1, keepdim=True)
 			normalised_logits = (p_pos_weights*df1)/u - exp_logits
-			return -torch.sum(labels*normalised_logits, dim=1, keepdim=True)
+			return -torch.sum(labels*normalised_logits, dim=1, keepdim=True)/torch.sum(labels, dim=1, keepdim=True)
+
 		loss_a = -torch.sum(df2(labels, logits_ab_aa, p_pos_weights1, neg_logits1, u1)/v1, dim=1)
 		loss_b = -torch.sum(df2(labels, logits_ba_bb, p_pos_weights2, neg_logits2, u2)/v2, dim=1)
 		loss = (loss_a + loss_b).mean()

@@ -308,12 +308,12 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     # Data loading code
-    mean = {'cifar10':  [125.3, 123.0, 113.9],
+    mean = {'cifar10':  [0.4914, 0.4822, 0.4465],
             'imagenet50':  [0.485, 0.456, 0.406],
             'imagenet100':  [0.485, 0.456, 0.406],
             'imagenet1000': [0.485, 0.456, 0.406],
             }[args.data_name]
-    std = {'cifar10':   [63.0, 62.1, 66.7],
+    std = {'cifar10':   [0.2023, 0.1994, 0.2010],
            'imagenet50':   [0.229, 0.224, 0.225],
            'imagenet100':   [0.229, 0.224, 0.225],
             'imagenet1000': [0.229, 0.224, 0.225],
