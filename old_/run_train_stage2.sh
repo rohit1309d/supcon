@@ -1,0 +1,11 @@
+CUDA_VISIBLE_DEVICES=0,1 python train_stage2.py \
+  --model_path ./saved_models/20221005_cifar10_resnet50_sogclr-128-2048_bz_2048_E100_WR10_lr_3.394_sqrt_wd_1e-06_t_0.1_g_0.9_lars_1/model_best.pth.tar \
+  --lr=.075 --epochs=100 --batch-size=2048 \
+  --learning-rate-scaling=sqrt \
+  --crop-min=.08 \
+  --gpu 0 \
+  --wd=1e-6 \
+  --data_name cifar10 \
+  --data ../data/cifar10/ \
+  --save_dir ./saved_models/20221005_cifar10_resnet50_sogclr-128-2048_bz_2048_E100_WR10_lr_3.394_sqrt_wd_1e-06_t_0.1_g_0.9_lars_1/ \
+  --print-freq 25

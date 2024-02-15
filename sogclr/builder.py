@@ -75,13 +75,12 @@ class SimCLR(nn.Module):
 			hidden2_large =  torch.cat(all_gather_layer.apply(hidden2), dim=0)
 			labels_large = torch.cat(all_gather_layer.apply(labels_idx), dim=0)
 			enlarged_batch_size = hidden1_large.shape[0]
+			masks  = F.one_hot((torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()), enlarged_batch_size).to(self.device) 
 
 			if labels_idx is None:			   
 				labels_idx = (torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()).to(self.device) 
 				labels = F.one_hot(labels_idx, enlarged_batch_size*2).to(self.device) 
-				masks  = F.one_hot((torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()), enlarged_batch_size).to(self.device) 
 			else:
-				masks  = F.one_hot((torch.arange(batch_size, dtype=torch.long) + batch_size  * torch.distributed.get_rank()), enlarged_batch_size).to(self.device) 
 				labels = torch.cat([(labels_idx[:, None] == labels_large[None, :]),(labels_idx[:, None] == labels_large[None, :])], dim=1).float().to(self.device) 
 			batch_size = enlarged_batch_size
 		else:
@@ -145,7 +144,7 @@ class SimCLR(nn.Module):
 			exp_logits = p_pos_weights*logits
 			df1 = torch.sum(neg_logits*logits, dim=1, keepdim=True)
 			normalised_logits = (p_pos_weights*df1)/u - exp_logits
-			return -torch.sum(labels*normalised_logits, dim=1, keepdim=True)/torch.sum(labels, dim=1, keepdim=True)
+			return -torch.sum(labels*normalised_logits/self.T, dim=1, keepdim=True)/torch.sum(labels, dim=1, keepdim=True)
 
 		loss_a = -torch.sum(df2(labels, logits_ab_aa, p_pos_weights1, neg_logits1, u1)/v1, dim=1)
 		loss_b = -torch.sum(df2(labels, logits_ba_bb, p_pos_weights2, neg_logits2, u2)/v2, dim=1)

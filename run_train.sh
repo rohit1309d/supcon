@@ -1,12 +1,12 @@
 CUDA_VISIBLE_DEVICES=0,1 python train.py \
-  --lr=.075 --epochs=350 --batch-size=2048 \
+  --lr=.075 --epochs=350 --batch-size=256 \
   --learning-rate-scaling=sqrt \
   --loss_type dcl \
   --gamma 0.9 \
-  --multiprocessing-distributed --world-size 1 --rank 0 --workers 64 \
+  --multiprocessing-distributed --world-size 1 --rank 0 --workers 32 \
   --crop-min=.08 \
   --wd=1e-6 \
-  --dist-url 'tcp://localhost:10002' \
+  --dist-url 'tcp://localhost:10001' \
   --data_name cifar10 \
   --data ../data/cifar10/ \
   --save_dir ./saved_models/ \

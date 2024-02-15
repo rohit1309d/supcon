@@ -27,6 +27,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+from sogclr import folder
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
 
@@ -188,14 +189,14 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # remove original fc and add fc with customized num_classes
     hidden_dim = model.fc.weight.shape[1]
-    del model.fc  # remove original fc layer
-    model.fc = nn.Linear(hidden_dim, num_classes, bias=True)
-    print (model)
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():
-        if name not in ['%s.weight' % linear_keyword, '%s.bias' % linear_keyword]:
-            param.requires_grad = False
+        # if name not in ['%s.weight' % linear_keyword, '%s.bias' % linear_keyword]:
+        param.requires_grad = False
+    print (model)
+    del model.fc  # remove original fc layer
+    model.fc = nn.Linear(hidden_dim, num_classes, bias=True)
 
     # init the fc layer
     getattr(model, linear_keyword).weight.data.normal_(mean=0.0, std=0.01)
@@ -326,7 +327,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.data_name == 'imagenet1000' or args.data_name == 'imagenet100' or args.data_name == 'imagenet50':
         traindir = os.path.join(args.data, 'train')
         valdir = os.path.join(args.data, 'val')
-        train_dataset = datasets.ImageFolder(
+        train_dataset = folder.ImageFolder(
             traindir,
             transforms.Compose([
                 transforms.RandomResizedCrop(224),
@@ -337,7 +338,7 @@ def main_worker(gpu, ngpus_per_node, args):
     elif args.data_name == 'cifar10':
         traindir = os.path.join(args.data, 'train')
         valdir = os.path.join(args.data, 'test')
-        train_dataset = datasets.ImageFolder(
+        train_dataset = folder.ImageFolder(
             traindir,
             transforms.Compose([
                 transforms.RandomResizedCrop(32),
@@ -357,13 +358,11 @@ def main_worker(gpu, ngpus_per_node, args):
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
-
-
     # validation 
     if args.data_name == 'imagenet1000' or args.data_name == 'imagenet100' or args.data_name == 'imagenet50':
            
             val_loader = torch.utils.data.DataLoader(
-                datasets.ImageFolder(valdir, transforms.Compose([
+                folder.ImageFolder(valdir, transforms.Compose([
                     transforms.Resize(256),
                     transforms.CenterCrop(224),
                     transforms.ToTensor(),
@@ -374,7 +373,7 @@ def main_worker(gpu, ngpus_per_node, args):
     elif args.data_name == 'cifar10':
            
             val_loader = torch.utils.data.DataLoader(
-                datasets.ImageFolder(valdir, transforms.Compose([
+                folder.ImageFolder(valdir, transforms.Compose([
                     transforms.Resize(48),
                     transforms.CenterCrop(32),
                     transforms.ToTensor(),
@@ -390,6 +389,7 @@ def main_worker(gpu, ngpus_per_node, args):
         validate(val_loader, model, criterion, args)
         return
 
+    best_model = {}
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -406,15 +406,19 @@ def main_worker(gpu, ngpus_per_node, args):
         best_acc1 = max(acc1, best_acc1)
         print (' * Best Acc@1:%.3f'%best_acc1)
 
-        #if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-        #        and args.rank == 0): # only the first GPU saves checkpoint
-        #    save_checkpoint({
-        #        'epoch': epoch + 1,
-        #        'arch': args.arch,
-        #        'state_dict': model.state_dict(),
-        #        'best_acc1': best_acc1,
-        #        'optimizer' : optimizer.state_dict(),
-        #    }, is_best, filename=os.path.join(save_root_path, logdir, 'checkpoint.pth.tar'), save_path=os.path.join(save_root_path, logdir))
+        if is_best:
+            best_model = {
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': model.state_dict(),
+                'best_acc1': best_acc1,
+                'optimizer' : optimizer.state_dict(),
+            }
+
+
+    if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+            and args.rank == 0): # only the first GPU saves checkpoint
+        save_checkpoint(best_model, True, filename=os.path.join(save_root_path, logdir, 'checkpoint.pth.tar'), save_path=os.path.join(save_root_path, logdir))
         #    if epoch == args.start_epoch:
         #        sanity_check(model.state_dict(), args.pretrained, linear_keyword)
 
@@ -430,17 +434,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         [batch_time, data_time, losses, top1, top5],
         prefix="Epoch: [{}]".format(epoch))
 
-    """
-    Switch to eval mode:
-    Under the protocol of linear classification on frozen features/models,
-    it is not legitimate to change any part of the pre-trained model.
-    BatchNorm in train mode may revise running mean/std (even if it receives
-    no gradient), which are part of the model parameters too.
-    """
-    model.eval()
-
     end = time.time()
-    for i, (images, target) in enumerate(train_loader):
+    for i, (images, target, _) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -450,7 +445,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             target = target.cuda(args.gpu, non_blocking=True)
 
         # compute output
-        output = model(images)[0] # after modifying resnet forward #torch.Size([1024, 1000]) torch.Size([1024, 2048])
+        output = model(images) # after modifying resnet forward #torch.Size([1024, 1000]) torch.Size([1024, 2048])
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -487,14 +482,14 @@ def validate(val_loader, model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        for i, (images, target) in enumerate(val_loader):
+        for i, (images, target, _) in enumerate(val_loader):
             if args.gpu is not None:
                 images = images.cuda(args.gpu, non_blocking=True)
             if torch.cuda.is_available():
                 target = target.cuda(args.gpu, non_blocking=True)
 
             # compute output
-            output = model(images)[0]
+            output = model(images)
             loss = criterion(output, target)
 
             # measure accuracy and record loss
